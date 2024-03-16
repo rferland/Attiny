@@ -30,6 +30,19 @@ void printInfos() {
   mySerial.println("/-************************************-");
   mySerial.println("");
 }
+uint16_t readVcc() {
+  uint16_t voltage;
+  long result;
+  // Read 1.1V reference against AVcc
+  ADMUX =  0b00100001;// adc source=1.1 ref; adc ref (base for the 1023 maximum)=Vcc
+  delay(2); // Wait for Vref to settle
+  ADCSRA |= 1<<ADSC; // Convert
+  while (bit_is_set(ADCSRA,ADSC));
+  result = ADCL;
+  result |= ADCH<<8;
+  voltage = 1126400L / result; // Back-calculate AVcc in mV
+  return voltage;
+}
 
 void setup() {
   mySerial.begin(9600);
@@ -59,6 +72,10 @@ void loop() {
   } else {
     /* On est connecté*/
     // Start listening for data
+    mySerial.print(F("Voltage: "));
+    mySerial.println();
+    mySerial.print("");
+
     radio.startListening();
     mySerial.println(F("startListening"));
     mySerial.println(F("Radio connected "));
@@ -80,13 +97,13 @@ void loop() {
       mySerial.println(data[1]);
       mySerial.print(F("data[2]: "));
       mySerial.println(data[2]);
-      mySerial.print(F("data[3]: "));
+      mySerial.print(F("data[3]"));
       mySerial.println(data[3]);
 
       data[0] = 4;
       data[1] = 5;
       data[2] = 6;
-      data[3] = 7;
+      data[3] = readVcc();
 
       radio.stopListening();  // First, stop listening so we can talk
       delay(10);
