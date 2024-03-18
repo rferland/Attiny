@@ -1,0 +1,6 @@
+{
+    "configuration": "cpu=attiny24,clock=internal8",
+    "board": "attiny:avr:ATtinyX4",
+    "port": "COM4",
+    "sketch": "RF24Attiny_SendAndSleep\\RF24Attiny_SendAndSleep.ino"
+}
