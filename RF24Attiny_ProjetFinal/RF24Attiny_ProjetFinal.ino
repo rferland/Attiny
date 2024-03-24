@@ -4,6 +4,8 @@
 #include <avr/sleep.h>
 #include <avr/wdt.h>
 #include <avr/interrupt.h>
+#include <RF24Network.h>
+#include <EEPROM.h>
 
 // Define the CE and CSN pins connected to your ATtiny84
 #define CE_PIN 2
@@ -11,23 +13,44 @@
 #define RX_PIN 8  // this is physical pin 2 PB0
 #define TX_PIN 9  // this is physical pin 3 PB1
 
-// Create an instance of the RF24 class
-RF24 radio(CE_PIN, CSN_PIN);
-SoftwareSerial mySerial(RX_PIN, TX_PIN);
+#define START_EEPROM_ADDRESS 0
+
+#define NOT_ASSIGNED 0
+
+uint16_t ClientId = NOT_ASSIGNED;
+uint16_t sleepDelay = 9;
 
 // Address configuration
 const byte readingAddress[6] = "2Node";
 const byte writingAddress[6] = "1Node";
-uint16_t data[4] = { 1, 2, 3, 4 };
+
+struct __attribute__((__packed__)) {
+  uint16_t ID;
+  uint16_t Humidity;
+  uint16_t Temperature;
+  uint16_t Voltage;
+} SentDatas;
+
+struct __attribute__((__packed__)) {
+  uint16_t ID;
+  uint16_t Delay;
+  uint16_t Action;
+} ReceivedDatas;
+// Create an instance of the RF24 class
+RF24 radio(CE_PIN, CSN_PIN);
+SoftwareSerial mySerial(RX_PIN, TX_PIN);
+
 
 void setup_watchdog(int ii) {
   // 0=16ms, 1=32ms, 2=64ms, 3=128ms, 4=250ms, 5=500ms
   // 6=1 sec,7=2 sec, 8=4 sec, 9=8 sec
 
   uint8_t bb;
-  if (ii > 9) ii = 9;
+  if (ii > 9)
+    ii = 9;
   bb = ii & 7;
-  if (ii > 7) bb |= (1 << 5);
+  if (ii > 7)
+    bb |= (1 << 5);
   bb |= (1 << WDCE);
 
   MCUSR &= ~(1 << WDRF);
@@ -78,88 +101,121 @@ uint16_t readVcc() {
   voltage = 1126400L / result;  // Back-calculate AVcc in mV
   return voltage;
 }
+bool Send() {
+  radio.stopListening();  // First, stop listening so we can talk
+  delay(10);
 
+  SentDatas.Humidity = 12;
+  SentDatas.ID = ReceivedDatas.ID;
+  SentDatas.Temperature = 20;
+  SentDatas.Voltage = readVcc();
+
+  mySerial.println(F("stopListening"));
+  if (radio.write(&SentDatas, sizeof(SentDatas))) {
+
+    mySerial.print(F("Sent response "));
+
+    delay(10);
+    return true;
+  } else {
+    mySerial.println(F("RADIO.WRITE FAILED!"));
+  }
+}
+
+bool Receive() {
+        bool timeOut=false;
+  radio.startListening();
+  mySerial.println(F("startListening"));
+  mySerial.println(F("Radio connected "));
+  unsigned long startTime = millis();
+  // Check if data is available to be received
+  while (!radio.available()){
+        // Attend 2 secondes
+        if(millis()-startTime >2000){
+                timeOut=true;
+        break;
+        }
+  }
+  if(timeOut) mySerial.println("Receive time out!");
+  if (radio.available()) {
+    // Create a buffer to hold the received data
+    mySerial.println("Radio availaible");
+    // Read the data into the buffer
+
+    radio.read(&ReceivedDatas, sizeof(ReceivedDatas));
+    mySerial.println(F(""));
+    mySerial.println("[                ]");
+    mySerial.println("Radio read OK: ");
+    mySerial.print(F("Action: "));
+    mySerial.println(ReceivedDatas.Action);
+    mySerial.print(F("Delay: "));
+    mySerial.println(ReceivedDatas.Delay);
+    mySerial.print(F("ID: "));
+    mySerial.println(ReceivedDatas.ID);
+    mySerial.println("[                ]");
+    mySerial.println("");
+
+// Ça ne marche pas ici. On écrase ReceivedDatas
+    EEPROM.get(START_EEPROM_ADDRESS, ReceivedDatas);
+    if (ClientId != ReceivedDatas.ID || sleepDelay != ReceivedDatas.Delay) {
+      ClientId = ReceivedDatas.ID;
+      sleepDelay = ReceivedDatas.Delay;
+      EEPROM.put(START_EEPROM_ADDRESS,ReceivedDatas);
+    }
+    return true;
+  }
+  return false;
+}
 void setup() {
   mySerial.begin(9600);
   mySerial.println("===========");
   mySerial.println("Setup start");
   mySerial.println("===========");
-  // Initialize the SPI interface
-  // SPI.begin();
+
+  // Inclus dans AttinyCore
+  SPI.begin();
 
   // Initialize the NRF24L01+ module
   radio.begin();
   radio.setPALevel(RF24_PA_LOW);
   radio.setDataRate(RF24_2MBPS);
   radio.setChannel(76);
-  //Set the receiving radio to use the same address
+  // Set the receiving radio to use the same address
   radio.openReadingPipe(1, readingAddress);
   radio.openWritingPipe(writingAddress);
-
-  mySerial.println("Setup end");
-}
-
-bool Send() {
-  radio.stopListening();  // First, stop listening so we can talk
-  delay(10);
-  mySerial.println(F("stopListening"));
-  if (radio.write(&data, sizeof(data))) {
-
-    mySerial.print(F("Sent response "));
-    mySerial.println("[                ]");
-    mySerial.println("^^^^^^^^^^^^^^^^^^");
-    mySerial.println("");
-  }
-}
-
-bool Listen() {
   radio.startListening();
-  mySerial.println(F("startListening"));
-  mySerial.println(F("Radio connected "));
-  // Check if data is available to be received
-  if (radio.available()) {
-    // Create a buffer to hold the received data
-    unsigned long receivedData;
-    mySerial.println("Radio availaible");
-    // Read the data into the buffer
-    
-    radio.read(&data, sizeof(data));
-    mySerial.println(F(""));
-    mySerial.println("^^^^^^^^^^^^^^^^^^");
-    mySerial.println("[                ]");
-    mySerial.println("Radio read OK: ");
-    mySerial.print(F("data[0]: "));
-    mySerial.println(data[0]);
-    mySerial.print(F("data[1]: "));
-    mySerial.println(data[1]);
-    mySerial.print(F("data[2]: "));
-    mySerial.println(data[2]);
-    mySerial.print(F("data[3]"));
-    mySerial.println(data[3]);
 
-    data[0] = 4;
-    data[1] = 5;
-    data[2] = 6;
-    data[3] = readVcc();
-    return true;
-  }
-  return false;
+  // wdt_enable(WDTO_8S);
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+
+  mySerial.println("===========");
+  mySerial.println("Setup end");
+  mySerial.println("===========");
 }
+
 void loop() {
-  printInfos();
+
+  //delay(1000);
   if (!radio.isChipConnected()) {
-    //delay(100);
+    // delay(100);
     mySerial.println(F("Radio NOT connected "));
+
   } else {
+    printInfos();
     /* On est connecté*/
     // Start listening for data
-    if (Listen()) {
-      if (Send()) {
+    if (Send()) {
+      if (Receive()) {
       }
     }
     mySerial.println(F("Go to sleep "));
-    system_sleep(9);
-    mySerial.println(F("I'm back! "));
+    delay(100);
+    //set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    delay(100);       // Donnez un peu de temps pour que le message soit envoyé avant de dormir.
+    system_sleep(sleepDelay);  // Mettez le système en veille en secondes
 
+    mySerial.println(F("I'm back! "));
   }
+  // Ajoutez une petite pause pour éviter une utilisation excessive de la CPU et pour stabiliser la boucle.
+  delay(10);
 }
